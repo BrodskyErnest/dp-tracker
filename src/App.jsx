@@ -1,20 +1,20 @@
 import { useEffect, useState, useRef } from 'react';
+
 import { supabase } from './supabaseClient';
+import moment from 'moment';
 
 import Handsontable from 'handsontable';
 import { HotTable, HotColumn } from '@handsontable/react';
 import { registerAllModules } from 'handsontable/registry';
+import { registerLanguageDictionary, ruRU } from 'handsontable/i18n';
 import 'handsontable/dist/handsontable.full.css';
 
-import {
-	platform_options,
-	department_options,
-	employee_options,
-	format_options,
-} from '../utils/constants';
+import { platform_options, department_options, employee_options, format_options } from '../utils/constants';
+
 import './App.css';
 
 registerAllModules();
+registerLanguageDictionary(ruRU);
 
 export const ExampleComponent = () => {
 	const hotRef = useRef(null);
@@ -22,42 +22,9 @@ export const ExampleComponent = () => {
 	let saveClickCallback;
 	let exportClickCallback;
 
-	function isISODate(dateString) {
-		var regEx = /^\d{4}-\d{2}-\d{2}$/;
-
-		if (!dateString.match(regEx)) return false;
-
-		var d = new Date(dateString);
-		var dNum = d.getTime();
-		if (!dNum && dNum !== 0) return false;
-
-		return d.toISOString().slice(0, 10) === dateString;
-	}
-
-	function isDotDate(dateString) {
-		if (!/^\d{1,2}\.\d{1,2}\.\d{4}$/.test(dateString)) return false;
-
-		var parts = dateString.split('.');
-		var day = parseInt(parts[0], 10);
-		var month = parseInt(parts[1], 10);
-		var year = parseInt(parts[2], 10);
-
-		if (year < 1000 || year > 3000 || month == 0 || month > 12)
-			return false;
-
-		var monthLength = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-		if (year % 400 == 0 || (year % 100 != 0 && year % 4 == 0))
-			monthLength[1] = 29;
-
-		return day > 0 && day <= monthLength[month - 1];
-	}
-
 	async function upsertProjects(objects) {
 		try {
-			const { data, error } = await supabase
-				.from('projects')
-				.upsert(objects);
+			const { data, error } = await supabase.from('projects').upsert(objects);
 			if (error) throw error;
 		} catch (e) {
 			throw e;
@@ -66,10 +33,7 @@ export const ExampleComponent = () => {
 
 	async function deleteProjects(objects) {
 		try {
-			const { error } = await supabase
-				.from('projects')
-				.delete()
-				.in('id', objects);
+			const { error } = await supabase.from('projects').delete().in('id', objects);
 			if (error) throw error;
 		} catch (e) {
 			throw e;
@@ -91,30 +55,55 @@ export const ExampleComponent = () => {
 	}, []);
 
 	useEffect(() => {
+		// Get the hot instance from the hotRef
 		const hot = hotRef.current.hotInstance;
+
+		// Check if the hot instance exists
 		if (hot) {
-			hot.loadData(projects);
-			hot.addHook('afterLoadData', () => {
+			// Add a 'beforeUpdateData' hook
+			hot.addHook('beforeUpdateData', function (data) {
+				// Get the properties that end with 'deadline' or 'materials'
+				const properties = Object.keys(data[0]).filter(
+					(property) => property.endsWith('deadline') | property.endsWith('materials')
+				);
+
+				// Loop through each property
+				properties.forEach((property) => {
+					// Find the first non-null value for the property
+					const firstNonNullValue = data.find((row) => row[property] !== null)[property];
+
+					// Check if the first non-null value is a valid date
+					if (moment(firstNonNullValue, 'YYYY-MM-DD', true).isValid()) {
+						// Loop through each row in the data
+						data.forEach((row) => {
+							const value = row[property];
+							// Check if the value is not null and is a valid date
+							if (value !== null && moment(value, 'YYYY-MM-DD', true).isValid()) {
+								// Format the date and assign it back to the row
+								row[property] = moment(value, 'YYYY-MM-DD').format('DD.MM.YYYY');
+							}
+						});
+					}
+				});
+
+				// Return the updated data
+				return data;
+			});
+
+			// hot.updateData(projects);
+
+			// Add an 'afterUpdateData' hook
+			hot.addHook('afterUpdateData', () => {
+				// Get the columnSorting plugin
 				const columnSorting = hot.getPlugin('columnSorting');
+				// Sort the data by the first column in descending order
 				columnSorting.sort({
 					column: 0,
 					sortOrder: 'desc',
 				});
 			});
 		}
-	}, [projects]);
-
-	// useEffect(() => {
-	// 	const hot = hotRef.current.hotInstance;
-
-	// 	if (hot) {
-	// 		hot.addHook('afterRemoveRow', (index, amount, physicalRows) => {
-	// 			console.log(projects);
-	// 			console.log(projects[physicalRows]);
-	// 			console.log(index, amount, physicalRows);
-	// 		});
-	// 	}
-	// }, [hotRef, projects]);
+	}, [projects]); // The dependency array includes 'projects'
 
 	useEffect(() => {
 		const hot = hotRef.current.hotInstance;
@@ -137,7 +126,6 @@ export const ExampleComponent = () => {
 
 		saveClickCallback = () => {
 			const projects = hot.getSourceData();
-			// console.log(projects);
 			var maxId = projects.reduce((max, obj) => {
 				return obj.id !== null && obj.id > max ? obj.id : max;
 			}, 0);
@@ -159,94 +147,29 @@ export const ExampleComponent = () => {
 			});
 
 			const convertedProjects = projects.map((project) => {
-				const dateProperties = Object.getOwnPropertyNames(
-					project
-				).filter(
-					(property) =>
-						property.endsWith('deadline') |
-						property.endsWith('materials')
+				const dateProperties = Object.getOwnPropertyNames(project).filter(
+					(property) => property.endsWith('deadline') | property.endsWith('materials')
 				);
 				for (const property of dateProperties) {
-					if (
-						typeof project[property] === 'string' &&
-						project[property].trim().length === 0
-					) {
+					if (!moment(project[property], ['DD.MM.YYYY', 'YYYY-MM-DD']).isValid()) {
 						project[property] = null;
 					}
-					if (
-						isDotDate(project[property]) &&
-						project[property] !== null
-					) {
-						const dateParts = project[property].split('.');
-						const date = new Date(
-							dateParts[2],
-							dateParts[1] - 1,
-							dateParts[0]
-						);
-						const offset = date.getTimezoneOffset() * 60000;
 
-						const newDate = new Date(date - offset)
-							.toISOString()
-							.split('T')[0];
-						project[property] = newDate;
+					if (moment(project[property], 'DD.MM.YYYY', true).isValid()) {
+						const newDate = project[property];
+						project[property] = moment(newDate, 'DD.MM.YYYY').format('YYYY-MM-DD');
 					}
 				}
 				return project;
 			});
+			// console.log(convertedProjects);
 			upsertProjects(convertedProjects);
 		};
 	});
 
-	// const handleAfterCreateRow = (index, amount) => {
-	// const newRow = projects[index];
-	// console.log(projects);
-	// console.log(newRow);
-	// newRow.id =
-	// 	projects.reduce((prev, current) =>
-	// 		prev && prev.id > current.id ? prev : current
-	// 	).id + 1;
-	// };
-
-	// const handleAfterLoadData = (sourceData, initialLoad, source) => {
-	// console.log(sourceData, initialLoad, source);
-	// const hot = hotRef.current.hotInstance;
-	// hot.validateCells();
-	// const columnSorting = hot.getPlugin('columnSorting');
-	// columnSorting.sort({
-	// 	column: 0,
-	// 	sortOrder: 'desc',
-	// });
-	// };
-
-	const DateRenderer = (props) => {
-		const { value } = props;
-
-		let dateCell = value;
-
-		if (dateCell !== null) {
-			if (isISODate(dateCell)) {
-				const dateParts = dateCell.split('-');
-				dateCell = dateParts[2].concat(
-					'.',
-					dateParts[1],
-					'.',
-					dateParts[0]
-				);
-			}
-		}
-		return <span>{dateCell}</span>;
-	};
-
 	return (
 		<div>
 			<div>
-				{/* <button
-					id="load"
-					className="button"
-					onClick={(...args) => loadClickCallback(...args)}>
-					Загрузить
-				</button> */}
-				&nbsp;
 				<button
 					id="save"
 					className="button"
@@ -260,6 +183,7 @@ export const ExampleComponent = () => {
 				</button>
 			</div>
 			<HotTable
+				data={projects}
 				ref={hotRef}
 				rowHeaders={true}
 				colWidths={[
@@ -316,9 +240,8 @@ export const ExampleComponent = () => {
 				width="100%"
 				className="custom-table"
 				rowHeights={40}
+				language={ruRU.languageCode}
 				licenseKey="non-commercial-and-evaluation"
-				// afterCreateRow={handleAfterCreateRow}
-				// afterLoadData={handleAfterLoadData}
 				beforeRemoveRow={function (index, amount, physicalRows) {
 					const deletedIds = [];
 					for (const row of physicalRows) {
@@ -326,17 +249,6 @@ export const ExampleComponent = () => {
 					}
 					deleteProjects(deletedIds);
 				}}
-				// afterRemoveRow={function (index, amount, physicalRows) {
-				// console.log(projects);
-				// console.log(projects[physicalRows].id);
-				// console.log(
-				// 	index,
-				// 	amount,
-				// 	physicalRows,
-				// 	projects[physicalRows]
-				// );
-				// deleteProjects(objects);
-				// }}
 				afterChange={function (change, source) {
 					if (source === 'loadData') {
 						// The table data has been loaded.
@@ -387,16 +299,12 @@ export const ExampleComponent = () => {
 					data="programming_deadline"
 					type="date"
 					dateFormat="DD.MM.YYYY"
-					correctFormat={true}>
-					<DateRenderer hot-renderer />
-				</HotColumn>
+					correctFormat={true}></HotColumn>
 				<HotColumn
 					data="programming_materials"
 					type="date"
 					dateFormat="DD.MM.YYYY"
-					correctFormat={true}>
-					<DateRenderer hot-renderer />
-				</HotColumn>
+					correctFormat={true}></HotColumn>
 				<HotColumn
 					data="processing_processor"
 					type="dropdown"
@@ -406,16 +314,12 @@ export const ExampleComponent = () => {
 					data="processing_deadline"
 					type="date"
 					dateFormat="DD.MM.YYYY"
-					correctFormat={true}>
-					<DateRenderer hot-renderer />
-				</HotColumn>
+					correctFormat={true}></HotColumn>
 				<HotColumn
 					data="processing_materials"
 					type="date"
 					dateFormat="DD.MM.YYYY"
-					correctFormat={true}>
-					<DateRenderer hot-renderer />
-				</HotColumn>
+					correctFormat={true}></HotColumn>
 				<HotColumn
 					data="datafile_processor"
 					type="dropdown"
@@ -430,16 +334,12 @@ export const ExampleComponent = () => {
 					data="datafile_deadline"
 					type="date"
 					dateFormat="DD.MM.YYYY"
-					correctFormat={true}>
-					<DateRenderer hot-renderer />
-				</HotColumn>
+					correctFormat={true}></HotColumn>
 				<HotColumn
 					data="datafile_materials"
 					type="date"
 					dateFormat="DD.MM.YYYY"
-					correctFormat={true}>
-					<DateRenderer hot-renderer />
-				</HotColumn>
+					correctFormat={true}></HotColumn>
 				<HotColumn
 					data="programming_comments"
 					wordWrap={false}
@@ -456,137 +356,3 @@ export const ExampleComponent = () => {
 		</div>
 	);
 };
-
-// function App() {
-// 	const [projects, setProjects] = useState([]);
-
-// 	useEffect(() => {
-// 		getProjects();
-// 	}, []);
-
-// 	async function getProjects() {
-// 		try {
-// 			const { data, error } = await supabase.from('projects').select();
-// 			if (error) throw error;
-// 			setProjects(data);
-// 		} catch (e) {
-// 			throw e;
-// 		}
-// 	}
-
-// 	return (
-// 		<>
-// 			<div>
-// 				<ul>
-// 					{projects.map((project) => (
-// 						<li key={project.id}>{project.project_id}</li>
-// 					))}
-// 				</ul>
-// 			</div>
-// 		</>
-// 	);
-// }
-
-// export default App;
-
-// useEffect(() => {
-// 	getProjects();
-// }, []);
-
-// function isEmptyRow(instance, row) {
-// 	var rowData = instance.countRows();
-
-// 	for (var i = 0, ilen = rowData.length; i < ilen; i++) {
-// 		if (rowData[i] !== null) {
-// 			return false;
-// 		}
-// 	}
-
-// 	return true;
-// }
-
-// function defaultValueRenderer(
-// 	instance,
-// 	td,
-// 	row,
-// 	col,
-// 	prop,
-// 	value,
-// 	cellProperties
-// ) {
-// 	var args = arguments;
-// 	let max_obj = null;
-// 	if (typeof projects !== 'undefined' && projects.length > 0) {
-// 		max_obj = projects.reduce((prev, current) =>
-// 			prev && prev.id > current.id ? prev : current
-// 		);
-// 	}
-
-// 	if (args[5] === null && isEmptyRow(instance, row)) {
-// 		args[5] = max_obj === null ? 1 : max_obj.id + 1;
-// 		td.style.color = '#999';
-// 	} else {
-// 		td.style.color = '';
-// 	}
-// 	Handsontable.renderers.TextRenderer.apply(this, args);
-// }
-
-// cells={function (row, col, prop) {
-// 	const cellProperties = {};
-
-// 	cellProperties.renderer = defaultValueRenderer;
-
-// 	return cellProperties;
-// }}
-// beforeChange={function(changes) {
-//   const instance = hot;
-//   const columns = instance.countCols();
-//   const rowColumnSeen = {};
-//   const rowsToFill = {};
-
-//   for (let i = 0; i < changes.length; i++) {
-//     // if oldVal is empty
-//     if (changes[i][2] === null && changes[i][3] !== null) {
-//       if (isEmptyRow(instance, changes[i][0])) {
-//         // add this row/col combination to the cache so it will not be overwritten by the template
-//         rowColumnSeen[changes[i][0] + '/' + changes[i][1]] = true;
-//         rowsToFill[changes[i][0]] = true;
-//       }
-//     }
-//   }
-
-//   for (var r in rowsToFill) {
-//     if (rowsToFill.hasOwnProperty(r)) {
-//       for (let c = 0; c < columns; c++) {
-//         // if it is not provided by user in this change set, take the value from the template
-//         if (!rowColumnSeen[r + '/' + c]) {
-//         changes.push([r, c, null, templateValues[c]]);
-//       }
-//     }
-//   }
-// }
-// }}
-// if (!isAutosave) {
-// 	return;
-// }
-
-// fetch(
-// 	'https://handsontable.com/docs/scripts/json/save.json',
-// 	{
-// 		method: 'POST',
-// 		mode: 'no-cors',
-// 		headers: {
-// 			'Content-Type': 'application/json',
-// 		},
-// 		body: JSON.stringify({ data: change }),
-// 	}
-// ).then((response) => {
-// 	setOutput(
-// 		`Autosaved (${change.length} cell${
-// 			change.length > 1 ? 's' : ''
-// 		})`
-// 	);
-// 	console.log(
-// 		'The POST request is only used here for the demo purposes'
-// 	);
-// });

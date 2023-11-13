@@ -1,4 +1,5 @@
 @import 'handsontable/dist/handsontable.full.min.css';
+@import '../node_modules/pikaday/css/pikaday.css';
 
 .custom-table thead th:nth-child(even),
 .custom-table tbody tr:nth-child(odd) th {
